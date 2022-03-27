@@ -291,6 +291,10 @@ class EvaluateFriendlySeq2SeqTrainer(transformers.trainer_seq2seq.Seq2SeqTrainer
             gen_kwargs["knowledge_attention_mask"] = inputs["knowledge_attention_mask"]
         if "task_ids" in inputs:
             gen_kwargs["task_ids"] = inputs["task_ids"]
+        if "row_ids" in inputs:
+            gen_kwargs['row_ids'] = inputs['row_ids']
+        if "column_ids" in inputs:
+            gen_kwargs['column_ids'] = inputs['column_ids']
 
         generated_tokens = self.model.generate(
             inputs["input_ids"],
@@ -329,10 +333,19 @@ class EvaluateFriendlySeq2SeqTrainer(transformers.trainer_seq2seq.Seq2SeqTrainer
     ) -> EvalPrediction:
         assert isinstance(examples, Dataset)
 
+        # added by @zhoujun
+        # skip_special_tokens = False if 'input_tokens' in examples[0] else True
         predictions = self.tokenizer.batch_decode(predictions, skip_special_tokens=True)
 
         # Save locally.
         if self.args.local_rank <= 0:
+            tensor_keys = [k for (k, v) in examples[0].items() if isinstance(v, torch.Tensor)]
+            ignored_keys = ['input_tokens', 'output_tokens'] + tensor_keys
+            for idx, example in enumerate(examples):
+                for key in ignored_keys:
+                    if key in example:
+                        example.pop(key)
+
             with open(f"{self.args.output_dir}/predictions_{stage}.json", "w") as f:
                 json.dump(
                     [dict(**{"prediction": predictions[idx]}, **examples[idx]) for idx in range(len(predictions))],

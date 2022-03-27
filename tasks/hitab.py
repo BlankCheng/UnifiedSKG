@@ -42,7 +42,7 @@ _URL = "https://drive.google.com/u/0/uc?id=15825NnuKWGY3D4NHX6BLRrBLc-2GKpKN&exp
 
 
 class HiTab(datasets.GeneratorBasedBuilder):
-    """The WikiTableQuestions dataset"""
+    """The HiTab dataset"""
 
     def _info(self):
         return datasets.DatasetInfo(

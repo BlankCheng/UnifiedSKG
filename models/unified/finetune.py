@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from torch import nn
+import torch
 from .base import PushToHubFriendlyModel
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
@@ -22,7 +23,10 @@ class Model(PushToHubFriendlyModel):
             self.tokenizer.add_tokens([v for k, v in args.special_tokens])
             self.pretrain_model.resize_token_embeddings(len(self.tokenizer))
 
-    def forward(self, input_ids, attention_mask, labels):
+        if args.bert.extra_pretrain_path:
+            self.extra_init_pretrain_model(args.bert.extra_pretrain_path)
+
+    def forward(self, input_ids, attention_mask, labels, **kwargs):
         loss = self.pretrain_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -40,3 +44,14 @@ class Model(PushToHubFriendlyModel):
         )
 
         return generated_ids
+
+    def extra_init_pretrain_model(self, extra_pretrain_path, strict=True):
+        """
+        Load extra pretrained model form local path.
+        """
+        pretrain_dict = torch.load(extra_pretrain_path,
+                                   map_location=torch.device('cpu'))
+
+        self.load_state_dict(pretrain_dict, strict=strict)
+        print(f"Load {len(pretrain_dict)} params(trict={strict}) to pretrained_model.")
+

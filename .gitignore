@@ -133,3 +133,12 @@ Temporary Items
 
 # PyCharm
 **/.idea/**/*
+
+
+# Debug files
+debug*.py
+
+
+# Data
+data/
+

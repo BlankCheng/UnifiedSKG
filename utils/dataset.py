@@ -1,6 +1,10 @@
 import os
+import copy
+
 import torch
 from torch.utils.data import Dataset
+
+from transformers import AutoConfig
 
 
 class TokenizedDataset(Dataset):
@@ -9,12 +13,22 @@ class TokenizedDataset(Dataset):
         self.args = args
         self.training_args = training_args
         self.tokenizer = tokenizer
+        # self.seq2seq_dataset = seq2seq_dataset[:128]  # TODO: tmp for debug
         self.seq2seq_dataset = seq2seq_dataset
+        self.model_config = AutoConfig.from_pretrained(self.args.bert.location)
 
         self.conv_sep = " || "
 
     def __getitem__(self, index):
         raw_item = self.seq2seq_dataset[index]
+
+        # already tokenized input, return. added by @zhoujun
+        if raw_item.get("input_ids", None) is not None and isinstance(raw_item["input_ids"], torch.Tensor):
+            item = dict()
+            for k, v in raw_item.items():
+                if isinstance(v, torch.Tensor):
+                    item[k] = v
+            return item
 
         if raw_item["text_in"]:
             ###################
@@ -67,7 +81,7 @@ class TokenizedDataset(Dataset):
         if self.args.model.use_description and self.args.model.concatenate_description:
             seq_in = "{} ; {}".format(raw_item["description"], seq_in)
 
-        tokenized_question_and_schemas = self.tokenizer(
+        tokenized_question_and_schemas = self.tokenizer(  # ?should input_ids has `bos_token` and `eos_token`?
             seq_in,
             padding="max_length",
             truncation=True,
@@ -117,6 +131,24 @@ class TokenizedDataset(Dataset):
                                                  )
             item['knowledge_input_ids'] = torch.LongTensor(tokenized_knowledge.data["input_ids"])
             item['knowledge_attention_mask'] = torch.LongTensor(tokenized_knowledge.data["attention_mask"])
+
+        # Explicit decoder_input_ids for MLM task
+        # if hasattr(self.args, 'preprocess') \
+        #         and hasattr(self.args.preprocess, 'pretrain_task') \
+        #         and self.args.preprocess.pretrain_task == 'mlm':
+        #         decoder_input_ids = tokenized_inferred_input_ids
+        #         # copy from `shift_tokens_right`
+        #         shifted_input_ids = decoder_input_ids.new_zeros(decoder_input_ids.shape)
+        #         shifted_input_ids[1:] = decoder_input_ids[:-1].clone()
+        #         shifted_input_ids[0] = self.model_config.decoder_start_token_id
+        #
+        #         assert self.tokenizer.pad_token_id is not None, "self.model.config.pad_token_id has to be defined."
+        #         # replace possible -100 values in labels by `pad_token_id`
+        #         shifted_input_ids.masked_fill_(shifted_input_ids == -100, self.tokenizer.pad_token_id)
+        #
+        #         item['decoder_input_ids'] = shifted_input_ids
+        #         ic()
+        #         ic(item)
 
         return item
 

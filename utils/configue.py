@@ -39,6 +39,21 @@ class Args(object):
     def __len__(self):
         return len(set(dir(self)) - self.__default__)
 
+    def to_dict(self):
+        config_dict = dict()
+        for section_name in dir(self):
+            if section_name.startswith('__') \
+                    or section_name in ['dir', 'to_dict']:
+                continue
+            section = getattr(self, section_name)
+            config_dict[section_name] = dict()
+            for item_name in dir(section):
+                if item_name.startswith('__') or \
+                        item_name in ['dir', 'to_dict']:
+                    continue
+                config_dict[section_name][item_name] = getattr(section, item_name)
+        return config_dict
+
 
 class String(object):
     @staticmethod
@@ -102,7 +117,6 @@ class Configure(object):
                 if getattr(cur, names[-1]) is None:
                     setattr(cur, names[-1], arg)
         return args
-
 
     @staticmethod
     def Get(cfg):

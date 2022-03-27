@@ -1,6 +1,7 @@
 import logging
 import os
 import time
+from icecream import install
 
 import torch
 import datasets
@@ -17,10 +18,12 @@ from utils.configue import Configure
 from utils.dataset import TokenizedDataset
 from utils.trainer import EvaluateFriendlySeq2SeqTrainer
 from utils.training_arguments import WrappedSeq2SeqTrainingArguments
+from utils import WikiTableSample, Table, Question, Cell, Date
 
 # Huggingface realized the "Seq2seqTrainingArguments" which is the same with "WrappedSeq2SeqTrainingArguments"
 # in transformers==4.10.1 during our work.
 logger = logging.getLogger(__name__)
+install()
 
 
 def main() -> None:
@@ -39,8 +42,13 @@ def main() -> None:
     # Get args
     parser = HfArgumentParser((WrappedSeq2SeqTrainingArguments,))
     training_args, = parser.parse_args_into_dataclasses()
-    set_seed(training_args.seed)
-    args = Configure.Get(training_args.cfg)
+    set_seed(training_args.seed)  # `training_args` contains all the input command-line arguments
+    args = Configure.Get(training_args.cfg)  # `.cfg`="Salesforce/T5_base_finetune_wikitq.cfg"
+    print("Config file: ", training_args.cfg)
+    print(f"******** args ********\n{args.to_dict()}")
+    print(f"******** training_args *****\n{training_args}")
+    args.preprocess.max_input_length = training_args.input_max_length
+    args.preprocess.max_generation_length = training_args.generation_max_length
 
     if 'checkpoint-???' in args.bert.location:
         args.bert.location = get_last_checkpoint(
@@ -94,22 +102,23 @@ def main() -> None:
         os.makedirs(cache_root, exist_ok=True)
         meta_tuning_data = {}
         for task, arg_path in args.arg_paths:
-            task_args = Configure.Get(arg_path)
+            task_args = Configure.Get(arg_path)  # `arg_path`="META_TUNING/wikitq.cfg"
             task_args.bert = args.bert
             print('task_args.bert.location:', task_args.bert.location)
             task_raw_datasets_split: datasets.DatasetDict = datasets.load_dataset(
-                path=task_args.dataset.loader_path,
-                cache_dir=task_args.dataset.data_store_path)
+                path=task_args.dataset.loader_path,  # loading code
+                cache_dir=task_args.dataset.data_store_path)  # location to store the dataset
+            # convert to seq2seq format dataset
             task_seq2seq_dataset_split: tuple = utils.tool.get_constructor(task_args.seq2seq.constructor)(task_args).\
-                to_seq2seq(task_raw_datasets_split, cache_root)
+                to_seq2seq(task_raw_datasets_split, cache_root)  # table-text linearization. `.constructor`=seq2seq_construction.wikitq
 
             meta_tuning_data[arg_path] = task_seq2seq_dataset_split
 
         seq2seq_dataset_split: tuple = utils.tool.get_constructor(args.seq2seq.constructor)(args).\
-            to_seq2seq(meta_tuning_data)
+            to_seq2seq(meta_tuning_data)  # `.constructor`=seq2seq_construction.meta_tuning
 
-    evaluator = utils.tool.get_evaluator(args.evaluate.tool)(args)
-    model = utils.tool.get_model(args.model.name)(args)
+    evaluator = utils.tool.get_evaluator(args.evaluate.tool)(args)  # `.tool`=metrics.meta_tuning.evaluator
+    model = utils.tool.get_model(args.model.name)(args)  # `.name`=unified.finetune
     model_tokenizer = model.tokenizer
 
     seq2seq_train_dataset, seq2seq_eval_dataset, seq2seq_test_dataset = None, None, None
@@ -121,6 +130,7 @@ def main() -> None:
         raise ValueError("Other split not support yet.")
 
     # We wrap the "string" seq2seq data into "tokenized tensor".
+    # `train_dataset` is a Dict of input/output tensors.
     train_dataset = TokenizedDataset(args, training_args, model_tokenizer,
                                      seq2seq_train_dataset) if seq2seq_train_dataset else None
     eval_dataset = TokenizedDataset(args, training_args, model_tokenizer,
@@ -130,7 +140,7 @@ def main() -> None:
 
     # Initialize our Trainer
     early_stopping_callback = EarlyStoppingCallback(early_stopping_patience=args.seq2seq.patience if args.seq2seq.patience else 5)
-    trainer = EvaluateFriendlySeq2SeqTrainer(
+    trainer = EvaluateFriendlySeq2SeqTrainer(  # `train()` is from `transformers`, `evaluate()` and `predict()` are overrided
         args=training_args,
         model=model,
         evaluator=evaluator,
@@ -174,15 +184,19 @@ def main() -> None:
     # Training
     if training_args.do_train:
         checkpoint = None
-        if training_args.resume_from_checkpoint is not None:
+        if training_args.resume_from_checkpoint is not None:  # =None
             checkpoint = training_args.resume_from_checkpoint
-        elif last_checkpoint is not None:
+        elif last_checkpoint is not None:  # =None
             checkpoint = last_checkpoint
 
+        # eval is done at each epoch saved in `.train()`.
+        # ckpt is saved at each epoch, while `args.save_total_limit`
+        #   restricts the max #ckpts on disk. Now only the best is saved.
+        # Note the best ckpt is loaded when training completes, for the final evaluation (as following codes).
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
         trainer.save_model()  # Saves the tokenizer too for easy upload
 
-        metrics = train_result.metrics
+        metrics = train_result.metrics  # {"epoch": x, "train_loss": x, "train_runtime": x, "train_samples": x, ...}
         max_train_samples = len(train_dataset)
         metrics["train_samples"] = min(max_train_samples, len(train_dataset))
 

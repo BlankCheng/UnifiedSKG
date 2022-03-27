@@ -46,7 +46,7 @@ class Model(PushToHubFriendlyModel):
             self.pretrain_model.resize_token_embeddings(len(self.tokenizer))
 
         # Prefix related.
-        self.register_buffer('input_tokens', torch.arange(self.preseqlen).long())
+        self.register_buffer('input_tokens', torch.arange(self.preseqlen).long())  # 默认的input token ids为0-to-preseqlen
 
         self.wte = nn.Embedding(self.preseqlen, self.n_embd)
         self.control_trans = nn.Sequential(
@@ -58,7 +58,7 @@ class Model(PushToHubFriendlyModel):
             self.knowledge_trans = nn.Sequential(
                 nn.Linear(self.n_embd, self.mid_dim),
                 nn.Tanh(),
-                nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd),
+                nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd),  # 用以作所有layer的pref_k和pref_v emb
             )
 
         self.wte_enc = nn.Embedding(self.preseqlen, self.n_embd)
@@ -254,10 +254,10 @@ class Model(PushToHubFriendlyModel):
                 ):
         bsz = input_ids.shape[0]
 
-        # Encode description.
+        # Encode description. first token emb of input description (if exist)
         description_representation = self.get_description_representation(kwargs)
 
-        # Encode knowledge.
+        # Encode knowledge. all token emb of input knowledge (if exist)
         knowledge_representation = self.get_knowledge_representation(kwargs)
 
         past_prompt = self.get_prompt(
@@ -288,6 +288,7 @@ class Model(PushToHubFriendlyModel):
         past_prompt = self.get_prompt(
             bsz=bsz, sample_size=kwargs['num_beams'], description=description_representation, knowledge=knowledge_representation,
         )
+
         generated_ids = self.pretrain_model.generate(
             input_ids=input_ids,
             attention_mask=attention_mask,
